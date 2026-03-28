@@ -1,0 +1,29 @@
+{
+  "A_offline_baseline": {
+    "avg_retention": 1.0,
+    "avg_ndcg": 0.0062854422794625135,
+    "avg_ild": 0.055112291648983944,
+    "avg_ifr": 0.0,
+    "avg_reward": -1.1779023338234311,
+    "avg_session_len": 20.0,
+    "n_episodes": 40
+  },
+  "B_sim_user_rule_rec": {
+    "avg_retention": 0.08625000000000001,
+    "avg_ndcg": 0.08707122132452806,
+    "avg_ild": 0.08551202615102133,
+    "avg_ifr": 0.0,
+    "avg_reward": 0.6725390288365569,
+    "avg_session_len": 1.725,
+    "n_episodes": 40
+  },
+  "C_full_recoworld": {
+    "avg_retention": 0.08375,
+    "avg_ndcg": 0.08126908439979601,
+    "avg_ild": 0.13669456467032431,
+    "avg_ifr": 0.0,
+    "avg_reward": 0.7438343443000622,
+    "avg_session_len": 1.675,
+    "n_episodes": 40
+  }
+}

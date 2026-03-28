@@ -1,0 +1,8 @@
+
+big_matrix.csv
+small_matrix.csv
+__pycache__/
+*.pyc
+.cache/
+output/
+.env

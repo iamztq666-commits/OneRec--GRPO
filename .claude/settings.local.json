@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip3 list:*)",
+      "Bash(echo $DASHSCOPE_API_KEY)",
+      "Bash(conda info:*)",
+      "Read(//Users/zhangtianqi/.pyenv/**)",
+      "Bash(pip3 install:*)",
+      "Bash(python3:*)",
+      "Read(//Users/zhangtianqi/**)",
+      "Bash(python:*)",
+      "Bash(DASHSCOPE_API_KEY=sk-8d603dd1128848f28aade886865cda7f python3 run.py 2>&1)",
+      "Bash(DASHSCOPE_API_KEY=sk-8d603dd1128848f28aade886865cda7f /Library/Frameworks/Python.framework/Versions/3.13/bin/python3 -c \"print\\('hello'\\)\")",
+      "Bash(DASHSCOPE_API_KEY=sk-8d603dd1128848f28aade886865cda7f /Library/Frameworks/Python.framework/Versions/3.13/bin/python3 run.py)",
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(DASHSCOPE_API_KEY=sk-8d603dd1128848f28aade886865cda7f /Library/Frameworks/Python.framework/Versions/3.13/bin/python3 -c \"from config import cfg; print\\('config OK, device:', cfg.device\\)\")",
+      "Bash(DASHSCOPE_API_KEY=sk-8d603dd1128848f28aade886865cda7f /Library/Frameworks/Python.framework/Versions/3.13/bin/python3 -c \"\nfrom env import KuaiRecEnvData\ndata = KuaiRecEnvData\\(\\).load\\(\\)\nprint\\('Load OK'\\)\n\" 2>&1)",
+      "Bash(DASHSCOPE_API_KEY=sk-8d603dd1128848f28aade886865cda7f PYTHONUNBUFFERED=1 /Library/Frameworks/Python.framework/Versions/3.13/bin/python3 -u run.py 2>&1)",
+      "Bash(DASHSCOPE_API_KEY=sk-8d603dd1128848f28aade886865cda7f PYTHONUNBUFFERED=1 KMP_DUPLICATE_LIB_OK=TRUE /Library/Frameworks/Python.framework/Versions/3.13/bin/python3 -u run.py 2>&1)",
+      "Bash(pkill -f \"run.py\")",
+      "Bash(DASHSCOPE_API_KEY=sk-8d603dd1128848f28aade886865cda7f PYTHONUNBUFFERED=1 KMP_DUPLICATE_LIB_OK=TRUE /Library/Frameworks/Python.framework/Versions/3.13/bin/python3 -u run.py)"
+    ]
+  }
+}

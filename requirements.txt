@@ -1,0 +1,7 @@
+torch>=2.1.0
+faiss-gpu
+numpy
+pandas
+openai>=1.0.0
+tqdm
+scikit-learn
