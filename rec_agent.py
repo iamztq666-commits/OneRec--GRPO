@@ -295,11 +295,14 @@ class FAISSRetriever:
 # Rec Agent
 # ─────────────────────────────────────────────
 class RecAgent:
-    def __init__(self, data: KuaiRecEnvData, ranking_head: RankingHead):
+    def __init__(self, data: KuaiRecEnvData, ranking_head: RankingHead,
+                 intent_classifier=None, iid2cat: dict = None):
         self.data = data
         self.ranking_head = ranking_head.to(cfg.device)
         self.retriever: Optional[FAISSRetriever] = None
         self._instruction_emb_cache: dict = {}
+        self.intent_classifier = intent_classifier
+        self.iid2cat = iid2cat or {}
 
     def build_retriever(self):
         """构建FAISS索引（需要item embeddings已加载）"""
@@ -316,11 +319,29 @@ class RecAgent:
         """
         # ── 1. 召回 ──
         if self.retriever is None or self.data.item_embeddings is None:
-            # 无索引时随机召回
             candidates = list(np.random.choice(self.data.n_items,
                                                cfg.recall_topk, replace=False))
         else:
+            # 向量召回
             candidates = self.retriever.retrieve(state.mindset, cfg.recall_topk)
+
+            # 意图召回：用 IntentClassifier 预测当前意图，补充同类 item
+            if self.intent_classifier is not None and self.iid2cat and state.history_iids:
+                hist_embs = np.array([
+                    self.data.item_embeddings[iid]
+                    for iid in state.history_iids[-20:]
+                    if iid < len(self.data.item_embeddings)
+                ], dtype=np.float32)
+                if len(hist_embs) > 0:
+                    intent_cat, _ = self.intent_classifier.predict(hist_embs)
+                    # 找同类 item 补充到候选池
+                    same_cat = [iid for iid, cat in self.iid2cat.items()
+                                if cat == intent_cat and iid not in set(candidates)]
+                    if same_cat:
+                        extra = list(np.random.choice(same_cat,
+                                                      size=min(10, len(same_cat)),
+                                                      replace=False))
+                        candidates = candidates + extra
 
         # 过滤已看过的item
         seen = set(state.history_iids[-50:])

@@ -24,6 +24,8 @@ from user_sim import UserSimulator
 from sft_trainer import SFTTrainer
 from rl_trainer import GRPOTrainer
 from evaluate import run_ablation
+from behavior_predictor import train_behavior_predictor
+from intent_classifier import train_intent_classifier
 
 
 def parse_args():
@@ -110,13 +112,27 @@ def main():
     ranking_head = TransformerRankingHead().to(cfg.device)
     ckpt = f"{cfg.output_dir}/ranking_head_best.pt"
     if os.path.exists(ckpt):
-        ranking_head.load_state_dict(torch.load(ckpt, map_location=cfg.device))
-        print(f"  Loaded checkpoint: {ckpt}")
+        try:
+            ranking_head.load_state_dict(torch.load(ckpt, map_location=cfg.device))
+            print(f"  Loaded checkpoint: {ckpt}")
+        except RuntimeError:
+            print(f"  Checkpoint mismatch (old MLP format), starting fresh.")
 
-    rec_agent = RecAgent(data, ranking_head)
+    # ── 行为预测分类器 + 意图分类器 ──
+    print("  Training BehaviorPredictor...")
+    behavior_predictor = train_behavior_predictor(data, item_embs)
+
+    print("  Training IntentClassifier...")
+    from intent_classifier import extract_categories
+    intent_classifier, category_names = train_intent_classifier(data, item_embs)
+    iid2cat, _ = extract_categories(data)
+
+    rec_agent = RecAgent(data, ranking_head,
+                         intent_classifier=intent_classifier,
+                         iid2cat=iid2cat)
     rec_agent.build_retriever()
 
-    user_sim = UserSimulator(data)
+    user_sim = UserSimulator(data, behavior_predictor=behavior_predictor)
 
     all_users = env.sample_users(cfg.n_sim_users)
     split = int(len(all_users) * 0.8)

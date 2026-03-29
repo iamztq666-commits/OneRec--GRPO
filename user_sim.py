@@ -192,10 +192,14 @@ class UserSimulator:
     1. 逐条评估推荐，输出click/skip/leave
     2. 疲劳度累积到阈值 → 触发反思指令
     3. 反思指令：用自然语言表达"想要什么变化"
+
+    若传入 behavior_predictor，则用小分类器替代大部分 LLM 调用；
+    LLM 仅在疲劳触发反思指令时使用。
     """
 
-    def __init__(self, data: KuaiRecEnvData):
+    def __init__(self, data: KuaiRecEnvData, behavior_predictor=None):
         self.data = data
+        self.behavior_predictor = behavior_predictor
         self._profiles: Dict[int, UserProfile] = {}
         self._rng = np.random.default_rng(42)
 
@@ -222,13 +226,49 @@ class UserSimulator:
             text = self.data.get_item_text(iid)[:80]
             items_text.append(f"{i+1}. {text}")
 
-        # 判断是否需要LLM评估（节省API：简单规则+偶发LLM）
-        use_llm = self._should_use_llm(state)
-
-        if use_llm:
-            actions, instruction = self._llm_evaluate(state, profile, rec_list, items_text)
+        # 优先用行为预测分类器（速度快 100x）
+        if self.behavior_predictor is not None and self.data.item_embeddings is not None:
+            actions, instruction = self._predictor_evaluate(state, rec_list)
         else:
-            actions, instruction = self._rule_evaluate(state, profile, rec_list)
+            use_llm = self._should_use_llm(state)
+            if use_llm:
+                actions, instruction = self._llm_evaluate(state, profile, rec_list, items_text)
+            else:
+                actions, instruction = self._rule_evaluate(state, profile, rec_list)
+
+        return actions, instruction
+
+    def _predictor_evaluate(
+        self, state: MDPState, rec_list: List[int]
+    ) -> Tuple[List[str], str]:
+        """用 BehaviorPredictor 仿真行为，LLM 只在疲劳时生成反思指令"""
+        actions = []
+        instruction = ""
+        user_emb = state.mindset
+
+        for iid in rec_list:
+            if iid >= len(self.data.item_embeddings):
+                actions.append("skip")
+                continue
+            item_emb = self.data.item_embeddings[iid]
+            action = self.behavior_predictor.predict_action(user_emb, item_emb, state.fatigue)
+            actions.append(action)
+            if action == "leave":
+                break
+
+        while len(actions) < len(rec_list):
+            actions.append("skip")
+
+        # 疲劳时用 LLM 生成反思指令（调用频率极低）
+        if state.fatigue > cfg.fatigue_threshold:
+            profile = self.get_profile(state.user_id)
+            cats = profile.preferred_categories
+            other_cats = [c for c in ["搞笑", "美食", "科技", "音乐", "生活"] if c not in cats]
+            if other_cats:
+                target = self._rng.choice(other_cats)
+                instruction = f"最近看的内容太单一了，我想看更多{target}相关的视频"
+            else:
+                instruction = "推荐的内容有点重复，希望多一些新鲜感"
 
         return actions, instruction
 

@@ -114,7 +114,7 @@ def evaluate_episode(uid: int, env: RecoWorldEnv, agent,
             user_actions = []
             instruction = ""
             for iid in rec_list:
-                wr = env._wr_table.get((uid, iid), 0.0)
+                wr = float(env._wr_matrix[uid, iid]) if env._wr_matrix is not None else 0.0
                 if wr >= cfg.watch_ratio_threshold:
                     user_actions.append("click")
                 else:

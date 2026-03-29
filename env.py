@@ -125,18 +125,27 @@ class RecoWorldEnv:
     def __init__(self, data: KuaiRecEnvData):
         self.data = data
         self._rng = np.random.default_rng(42)
-        # 预计算watch_ratio查找表: (uid, iid) -> watch_ratio
-        self._wr_table: Dict[Tuple[int,int], float] = {}
+        # 预计算watch_ratio查找表: numpy矩阵 (n_users, n_items)，比dict节省80%内存
+        self._wr_matrix: Optional[np.ndarray] = None
         self._build_wr_table()
 
     def _build_wr_table(self):
         df = self.data.interactions[["uid", "iid", "watch_ratio"]].drop_duplicates(
             subset=["uid", "iid"], keep="last"
         )
-        self._wr_table = dict(zip(
-            zip(df["uid"].values.astype(int), df["iid"].values.astype(int)),
-            df["watch_ratio"].values.astype(float)
-        ))
+        n_users = self.data.n_users
+        n_items = self.data.n_items
+        mat = np.zeros((n_users, n_items), dtype=np.float16)  # float16 再省一半
+        uids = df["uid"].values.astype(int)
+        iids = df["iid"].values.astype(int)
+        wrs  = df["watch_ratio"].values.astype(np.float16)
+        mask = (uids < n_users) & (iids < n_items)
+        mat[uids[mask], iids[mask]] = wrs[mask]
+        self._wr_matrix = mat
+        # 释放DataFrame节省内存
+        import gc
+        del df
+        gc.collect()
 
     def reset(self, uid: int) -> MDPState:
         """初始化一个session"""
@@ -174,7 +183,7 @@ class RecoWorldEnv:
         # ── 即时奖励 ──
         new_history = state.history_iids.copy()
         for iid, action in zip(rec_list, user_actions):
-            wr = self._wr_table.get((uid, iid), 0.0)
+            wr = float(self._wr_matrix[uid, iid]) if self._wr_matrix is not None else 0.0
             info["watch_ratios"].append(wr)
 
             if action == "click":
