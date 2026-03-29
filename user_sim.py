@@ -9,20 +9,15 @@ import json
 import hashlib
 import pickle
 import os
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
 from dataclasses import dataclass, field
 
 import numpy as np
-from openai import OpenAI
+import torch
 
 from config import cfg
 from env import MDPState, KuaiRecEnvData
 
-
-client = OpenAI(
-    api_key=cfg.dashscope_api_key,
-    base_url="https://dashscope.aliyuncs.com/compatible-mode/v1"
-)
 
 # ── LLM调用缓存，避免重复调用 ──
 _llm_cache: Dict[str, str] = {}
@@ -38,17 +33,85 @@ def _save_cache():
     with open(_cache_path, "wb") as f:
         pickle.dump(_llm_cache, f)
 
-def _cached_llm_call(prompt: str, max_tokens: int = 200) -> str:
-    key = hashlib.md5(prompt.encode()).hexdigest()
-    if key in _llm_cache:
-        return _llm_cache[key]
+
+# ── 本地 Qwen3-8B 单例（懒加载，首次调用时初始化）──
+_local_model = None
+_local_tokenizer = None
+
+def _get_local_model():
+    global _local_model, _local_tokenizer
+    if _local_model is not None:
+        return _local_model, _local_tokenizer
+
+    print(f"[UserSim] Loading local LLM: {cfg.local_llm_model} ...")
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    _local_tokenizer = AutoTokenizer.from_pretrained(cfg.local_llm_model)
+
+    load_kwargs = {"device_map": "auto"}
+    if cfg.local_llm_dtype == "int4":
+        from transformers import BitsAndBytesConfig
+        load_kwargs["quantization_config"] = BitsAndBytesConfig(load_in_4bit=True)
+    else:
+        load_kwargs["torch_dtype"] = torch.bfloat16
+
+    _local_model = AutoModelForCausalLM.from_pretrained(
+        cfg.local_llm_model, **load_kwargs
+    )
+    _local_model.eval()
+    print(f"[UserSim] Local LLM loaded on {cfg.device}")
+    return _local_model, _local_tokenizer
+
+
+def _call_local_llm(prompt: str, max_tokens: int = 300) -> str:
+    """用本地 Qwen3-8B 推理，关闭 thinking 模式加速"""
+    model, tokenizer = _get_local_model()
+    messages = [{"role": "user", "content": prompt}]
+    text = tokenizer.apply_chat_template(
+        messages,
+        tokenize=False,
+        add_generation_prompt=True,
+        enable_thinking=False,   # 关闭 Qwen3 思考链，节省 token
+    )
+    inputs = tokenizer([text], return_tensors="pt").to(model.device)
+    with torch.no_grad():
+        output_ids = model.generate(
+            **inputs,
+            max_new_tokens=max_tokens,
+            temperature=0.7,
+            do_sample=True,
+            pad_token_id=tokenizer.eos_token_id,
+        )
+    new_tokens = output_ids[0][inputs.input_ids.shape[1]:]
+    return tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
+
+
+def _call_api_llm(prompt: str, max_tokens: int = 300) -> str:
+    """DashScope API fallback"""
+    from openai import OpenAI
+    client = OpenAI(
+        api_key=cfg.dashscope_api_key,
+        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+    )
     resp = client.chat.completions.create(
         model=cfg.qwen_model,
         messages=[{"role": "user", "content": prompt}],
         temperature=0.7,
         max_tokens=max_tokens,
     )
-    result = resp.choices[0].message.content.strip()
+    return resp.choices[0].message.content.strip()
+
+
+def _cached_llm_call(prompt: str, max_tokens: int = 300) -> str:
+    key = hashlib.md5(prompt.encode()).hexdigest()
+    if key in _llm_cache:
+        return _llm_cache[key]
+
+    if cfg.use_local_llm:
+        result = _call_local_llm(prompt, max_tokens)
+    else:
+        result = _call_api_llm(prompt, max_tokens)
+
     _llm_cache[key] = result
     _save_cache()
     return result

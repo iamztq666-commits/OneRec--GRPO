@@ -5,3 +5,7 @@ pandas
 openai>=1.0.0
 tqdm
 scikit-learn
+transformers>=4.51.0
+accelerate>=0.30.0
+# int4 量化可选（显存不够时用）：
+# bitsandbytes>=0.43.0

@@ -146,6 +146,128 @@ class RankingHead(nn.Module):
 
 
 # ─────────────────────────────────────────────
+# Transformer Ranking Head（Listwise，对齐 OneRec）
+# ─────────────────────────────────────────────
+class TransformerRankingHead(nn.Module):
+    """
+    Listwise Transformer 排序头
+
+    与 MLP（pointwise）的区别：
+      MLP：每个候选 item 独立打分，互相看不见
+      Transformer：所有候选 item 一起过 self-attention，
+                   能捕捉 item-item 交互（多样性、互补性）
+                   更接近 OneRec session-wise 的整体建模思路
+
+    输入格式与 RankingHead 完全兼容（drop-in 替换）：
+      user_emb:        (K, 1536) - 同一用户平铺 K 次
+      item_emb:        (K, 1536)
+      instruction_sim: (K, 1)
+      fatigue:         (K, 1)
+      step:            (K, 1)
+    输出: scores (K,)
+
+    参数量：约 5M（vs MLP 的 1.6M）
+    """
+    D_MODEL = 256
+    N_HEAD = 8
+    N_LAYERS = 3
+    DIM_FF = 512
+
+    def __init__(self):
+        super().__init__()
+        d = self.D_MODEL
+
+        # 输入投影
+        self.user_proj = nn.Sequential(
+            nn.Linear(cfg.embed_dim, d),
+            nn.LayerNorm(d),
+        )
+        self.item_proj = nn.Sequential(
+            nn.Linear(cfg.embed_dim, d),
+            nn.LayerNorm(d),
+        )
+        # context（instruction_sim + fatigue + step）融入 item token
+        self.ctx_proj = nn.Linear(3, d)
+
+        # Transformer encoder — Pre-LN，训练更稳定
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d,
+            nhead=self.N_HEAD,
+            dim_feedforward=self.DIM_FF,
+            dropout=0.1,
+            batch_first=True,
+            norm_first=True,
+        )
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=self.N_LAYERS)
+
+        # 打分头
+        self.score_head = nn.Linear(d, 1)
+        self._init_weights()
+
+    def _init_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+
+    def forward(self, user_emb, item_emb, instruction_sim, fatigue, step):
+        """
+        1. user embedding → CLS token（给整个候选序列提供用户上下文）
+        2. item embeddings + context → K 个 item token
+        3. [CLS, item_1, ..., item_K] → Transformer → 每个 item 输出打分
+        """
+        # user token：同一用户取第一行，投影为 (1, D)
+        user_token = self.user_proj(user_emb[0:1])          # (1, D)
+
+        # item tokens：投影 + context 融合
+        item_tokens = self.item_proj(item_emb)               # (K, D)
+        ctx = torch.cat([instruction_sim, fatigue, step], dim=-1)  # (K, 3)
+        item_tokens = item_tokens + self.ctx_proj(ctx)       # (K, D)
+
+        # 拼序列：[CLS, item_1, ..., item_K] → (1, K+1, D)
+        seq = torch.cat([user_token, item_tokens], dim=0).unsqueeze(0)
+
+        # Transformer 联合编码（item-item self-attention + user context）
+        out = self.transformer(seq)                          # (1, K+1, D)
+
+        # 取 item 部分（跳过 CLS）打分
+        item_out = out[0, 1:, :]                             # (K, D)
+        scores = self.score_head(item_out).squeeze(-1)       # (K,)
+        return scores
+
+    def score_candidates(
+        self,
+        user_emb: np.ndarray,
+        item_embs: np.ndarray,
+        instruction_emb: Optional[np.ndarray],
+        fatigue: float,
+        step: int,
+        device: str,
+    ) -> np.ndarray:
+        """与 RankingHead 接口完全一致"""
+        K = len(item_embs)
+        u = torch.tensor(np.tile(user_emb, (K, 1)), dtype=torch.float32).to(device)
+        it = torch.tensor(item_embs, dtype=torch.float32).to(device)
+
+        if instruction_emb is not None:
+            instr = torch.tensor(instruction_emb, dtype=torch.float32).to(device)
+            instr_norm = F.normalize(instr.unsqueeze(0), dim=-1)
+            item_norm = F.normalize(it, dim=-1)
+            sim = (item_norm @ instr_norm.T).squeeze(-1).unsqueeze(-1)
+        else:
+            sim = torch.zeros(K, 1).to(device)
+
+        fat = torch.full((K, 1), fatigue, dtype=torch.float32).to(device)
+        stp = torch.full((K, 1), step / cfg.max_session_steps, dtype=torch.float32).to(device)
+
+        self.eval()
+        with torch.no_grad():
+            scores = self(u, it, sim, fat, stp).cpu().numpy()
+        return scores
+
+
+# ─────────────────────────────────────────────
 # FAISS 召回索引
 # ─────────────────────────────────────────────
 class FAISSRetriever:
